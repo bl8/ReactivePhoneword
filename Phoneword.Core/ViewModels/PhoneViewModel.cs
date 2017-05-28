@@ -16,20 +16,21 @@ namespace CorePCL.ViewModels
             set { this.RaiseAndSetIfChanged(ref _phoneNumber, value); }
         }
 
-        public ReactiveCommand<string> TranslateNumber { get; protected set; }
+        public ReactiveCommand<string, string> TranslateNumber { get; protected set; }
 
-        public ReactiveCommand<Unit> Call { get; protected set; }
+        public ReactiveCommand<Unit, Unit> Call { get; protected set; }
 
-        public ReactiveCommand<object> CallHistory { get; protected set; }
+        public ReactiveCommand<Unit, Unit> CallHistory { get; protected set; }
 
         ObservableAsPropertyHelper<string> _translatedNumber;
         public string TranslatedNumber => _translatedNumber.Value;
 
         public PhoneViewModel()
         {
-            Locator.CurrentMutable.RegisterLazySingleton(() => new CallHistoryManager(), typeof(CallHistoryManager));
+            RegisterServices();
 
-            TranslateNumber = ReactiveCommand.CreateAsyncTask(parameter => GetTranslatedNumber(this.PhoneNumber));
+            TranslateNumber = ReactiveCommand.CreateFromTask<string, string>(
+                _ => GetTranslatedNumber(this.PhoneNumber));
 
             this.WhenAnyValue(x => x.PhoneNumber)
                 .Throttle(TimeSpan.FromMilliseconds(800), RxApp.MainThreadScheduler)
@@ -42,24 +43,28 @@ namespace CorePCL.ViewModels
 
             _translatedNumber = TranslateNumber.ToProperty(this, x => x.TranslatedNumber);
 
-            Call = ReactiveCommand.CreateAsyncTask(
-                this.WhenAnyValue(x => x.TranslatedNumber).
-                Select(x => !String.IsNullOrWhiteSpace(x)),
+            Call = ReactiveCommand.CreateFromTask(
                 async _ =>
                 {
-                    var c = new Call();
-                    c.NumberCalled = TranslatedNumber;
+                    var c = new Call() { NumberCalled = TranslatedNumber };
                     await Locator.Current.GetService<CallHistoryManager>().Add(c);
-                });
+                },
+                this.WhenAnyValue(x => x.TranslatedNumber).
+                Select(x => !String.IsNullOrWhiteSpace(x))
+            );
 
-            CallHistory = ReactiveCommand.Create();
+            CallHistory = ReactiveCommand.Create(() => { });
         }
-
 
         public static async Task<string> GetTranslatedNumber(string raw)
         {
-            return await Task.Run(() => (new PhoneTranslator()).ToNumber(raw));
+            return await Task.Run(() => Locator.Current.GetService<IPhoneTranslator>().ToNumber(raw));
         }
 
+        private void RegisterServices()
+        {
+            Locator.CurrentMutable.RegisterLazySingleton(() => new PhoneTranslator(), typeof(IPhoneTranslator));
+            Locator.CurrentMutable.RegisterLazySingleton(() => new CallHistoryManager(), typeof(CallHistoryManager));
+        }
     }
 }
